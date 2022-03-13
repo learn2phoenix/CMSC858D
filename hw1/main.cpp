@@ -269,7 +269,7 @@ void test_rank_support()
 }
 
 int main(){
-    // test_rank_support();
-    // test_select_support();
+    test_rank_support();
+    test_select_support();
     test_sparse_array();
 }

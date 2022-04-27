@@ -165,64 +165,68 @@ int main(int argc, char *argv[])
     obj << "seq_size,preftab_k,serialized_size,create_time\n";
 
     duration<double, std::milli> ms_double;
-    int i = 1;
-    while (i < 17) // We will iterate through references of size in increments of a factor of 2 wrt to starting reference
+  
+    // profiling on smaller file. DEafult location expected is CMSC858D_S22_Project2_sample/ecoli.fa
+    filename = "./CMSC858D_S22_Project2_sample/ecoli.fa";
+    KSeq record = read_seq(filename.c_str());
+    int SA_width = ceil(std::log2(record.seq.length()));
+    int k = 0;
+    while (k <= 15)
     {
-      std::string temp;
-      KSeq record = read_seq(filename.c_str());
-      for(int j =0; j < i; j++)
-      {
-        temp += record.seq;
+      sdsl::int_vector SA(record.seq.length(), 0);
+      SA.width(SA_width);
+      auto t1 = high_resolution_clock::now();
+      sdsl::algorithm::calculate_sa((const unsigned char*) record.seq.c_str(), record.seq.length(), SA);
+      std::unordered_map<std::string, interval> pref_Tab;
+      if (k != 0){
+        build_preftab(SA, record.seq, pref_Tab, k);
       }
-      record.seq = temp;
-      std::cout << record.seq.size() * sizeof(std::string::value_type) << std::endl;
-      int SA_width = ceil(std::log2(record.seq.length()));
-      int k = 0;
-      while (k <= 500)
+      auto t2 = high_resolution_clock::now();
+      ms_double = t2 - t1;
+      std::string index_file =  "indexes/ecoli_" + std::to_string(k);
+      my_serialize(record, SA, pref_Tab, k, index_file);
+      std::filesystem::path p(index_file);
+      obj << record.seq.size() << "," << k << "," << std::filesystem::file_size(p) << "," << ms_double.count() << "\n";
+      std::cout << "SA creation time at i=" << filename << ",k=" << k << ":" << ms_double.count() << std::endl;
+      if (k == 0)
       {
-        sdsl::int_vector SA(record.seq.length(), 0);
-        SA.width(SA_width);
-        auto t1 = high_resolution_clock::now();
-        sdsl::algorithm::calculate_sa((const unsigned char*) record.seq.c_str(), record.seq.length(), SA);
-        std::unordered_map<std::string, interval> pref_Tab;
-        if (k != 0){
-          build_preftab(SA, record.seq, pref_Tab, k);
-        }
-        auto t2 = high_resolution_clock::now();
-        ms_double = t2 - t1;
-        std::string index_file =  "indexes/" + std::to_string(i) + "_" + std::to_string(k);
-        my_serialize(record, SA, pref_Tab, k, index_file);
-        std::filesystem::path p(index_file);
-        obj << record.seq.size() << "," << k << "," << std::filesystem::file_size(p) << "," << ms_double.count() << "\n";
-        std::cout << "SA creation time at i=" << i << ",k=" << k << ":" << ms_double.count() << std::endl;
-        if (k == 0)
-        {
-          k = 1;
-        }
-        else{
-          if (k < 20)
-          {
-            k += 5;
-          }
-          else{
-            k += 50;
-          }
-        }
+        k = 1;
       }
-      i *= 2;
+      else{
+        k += 2;
+      }
     }
 
-    // KSeq record;
-    // SeqStreamIn iss(filename.c_str());
-    // // long int i = 0;
-    // while (iss >> record) {
-    //   // i++;
-    //   // std::cout << "At query: " << i << std::endl;
-    //   if (record.seq.empty()){
-    //       std::cout << "The query is empty. It will not be processed" << std::endl;
-    //   }
-
-    // }
+    // profiling on larger file. DEafult location expected is CMSC858D_S22_Project2_sample/human_chr20.fa
+    filename = "./CMSC858D_S22_Project2_sample/human_chr20_mod.fa";
+    record = read_seq(filename.c_str());
+    SA_width = ceil(std::log2(record.seq.length()));
+    k = 0;
+    while (k <= 15)
+    {
+      sdsl::int_vector SA(record.seq.length(), 0);
+      SA.width(SA_width);
+      auto t1 = high_resolution_clock::now();
+      sdsl::algorithm::calculate_sa((const unsigned char*) record.seq.c_str(), record.seq.length(), SA);
+      std::unordered_map<std::string, interval> pref_Tab;
+      if (k != 0){
+        build_preftab(SA, record.seq, pref_Tab, k);
+      }
+      auto t2 = high_resolution_clock::now();
+      ms_double = t2 - t1;
+      std::string index_file =  "indexes/human_chr20_" + std::to_string(k);
+      my_serialize(record, SA, pref_Tab, k, index_file);
+      std::filesystem::path p(index_file);
+      obj << record.seq.size() << "," << k << "," << std::filesystem::file_size(p) << "," << ms_double.count() << "\n";
+      std::cout << "SA creation time at i=" << filename << ",k=" << k << ":" << ms_double.count() << std::endl;
+      if (k == 0)
+      {
+        k = 1;
+      }
+      else{
+        k += 2;
+      }
+    }
     obj.close();
   }
   else

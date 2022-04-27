@@ -16,6 +16,9 @@
 #include <unordered_map>
 
 using namespace klibpp;
+using std::chrono::high_resolution_clock;
+using std::chrono::duration;
+using std::chrono::milliseconds;
 
 
 sdsl::int_vector<0> my_deserialize(KSeq& record,  std::unordered_map<std::string, interval>& preftab, long int& k, std::string ifile)
@@ -45,6 +48,7 @@ long int LCP(std::string X, std::string Y)
         if (X[i] != Y[i]) {
             break;
         }
+ 
         i++;
     }
     return i;
@@ -67,6 +71,7 @@ std::string get_seq_str(sdsl::int_vector<0>& SA, std::string& seq, std::string& 
 void search_naive(sdsl::int_vector<0>& SA, std::string& seq, std::string& query, std::vector<long int>& pos, long int start, long int end, long int lower_limit, long int upper_limit)
 {
   long int mid = floor((start + end) /  2);
+  // std::cout << "At mid: " << mid << std::endl;
   std::string seq_str = get_seq_str(SA, seq, query, mid);
 
   if (SA[mid] + query.size() < seq.size())
@@ -151,73 +156,168 @@ long int end_lcp)
 
 void search_queries(sdsl::int_vector<0>& SA, std::string& seq, std::string qfile, std::string mode, std::string ofile,std::unordered_map<std::string, interval> preftab, long int k, bool if_profile)
 {
-  KSeq record;
-  SeqStreamIn iss(qfile.c_str());
-  while (iss >> record) {
-    if (record.seq.empty()){
-        std::cout << "The query is empty. It will not be processed" << std::endl;
-    }
-    if (if_profile)
-    {
-      // By default profiling information will be saved in query_profiling.csv
-      std::ofstream obj;
-      obj.open("./query_profiling.csv");
-      obj << "seq_size,query_size,preftab_k,mode,search_time\n";
+  if (if_profile)
+  {
+    // By default profiling information will be saved in query_profiling.csv
+    std::ofstream obj;
+    obj.open("./query_profiling.csv");
+    obj << "seq_size,query_size,preftab_k,mode,search_time\n";
 
-      break;
-    }
-    else
+    // Profiling stuff in loop for each file
+    std::vector<std::string> query_files;
+     query_files.push_back("./CMSC858D_S22_Project2_sample/query.fa");
+    query_files.push_back("./CMSC858D_S22_Project2_sample/human_queries.fa");
+    duration<double, std::milli> ms_double;
+    for(int i=0; i<query_files.size(); i++)
     {
-      std::ofstream obj;
-      obj.open(ofile);
-      std::vector<long int> positions;
-      if (mode.compare("naive") == 0)
+      std::string qfile = query_files[i];
+      std::string index_prefix;
+
+      if (qfile.find("human") == std::string::npos) // means ecoli file
       {
-        if (k == 0)
-        {
-          search_naive(SA, seq, record.seq, positions, 0, SA.size() - 1, 0, SA.size() - 1);
-        }
-        else{
-          // We consult the preftab
-          interval search_interval;
-          if (preftab.count(record.seq.substr(0, k)) != 0)
-          {
-            search_interval = preftab[record.seq.substr(0, k)];
-            search_naive(SA, seq, record.seq, positions, search_interval.begin, search_interval.end, search_interval.begin, search_interval.end);
-          }
-        }
+        index_prefix = "ecoli";
       }
       else{
-        long int lcp = 0;
-        long int start_lcp;
-        long int end_lcp;
-        if (k == 0)
-        {
-          start_lcp = LCP(seq.substr(SA[0], record.seq.length()), record.seq);
-          end_lcp = LCP(seq.substr(SA[SA.size() - 1], record.seq.length()), record.seq);
-          search_accel(SA, seq, record.seq, positions, 0, SA.size() - 1, 0, SA.size() - 1, start_lcp, end_lcp);
+        index_prefix = "human_chr20";
+      }
+      int k = 0;
+      while(k <= 15)
+      {
+        std::string index_file = "./indexes/" + index_prefix + "_" + std::to_string(k);
+        std::cout << " I am trying to read index for " << index_file << std::endl; 
+        KSeq record_temp;
+        std::unordered_map<std::string, interval> preftab;
+        sdsl::int_vector SA;
+        long int k_temp;
+        SA = my_deserialize(record_temp, preftab, k_temp, index_file);
+        if (k != k_temp){
+          std::cout << "There is a problem" << std::endl;
+        }
+        std::string seq = record_temp.seq;
+
+        KSeq record;
+        SeqStreamIn iss(qfile.c_str());
+        std::vector<long int> positions;
+        while (iss >> record) {
+          // std::cout<< record.name << std::endl;
+          if (record.seq.empty()){
+              std::cout << "The query is empty. It will not be processed" << std::endl;
+          }
+          if (k == 0)
+          {
+            auto t1 = high_resolution_clock::now();
+            search_naive(SA, seq, record.seq, positions, 0, SA.size() - 1, 0, SA.size() - 1);
+            auto t2 = high_resolution_clock::now();
+            ms_double = t2 - t1;
+          }
+          else{
+            interval search_interval;
+            if (preftab.count(record.seq.substr(0, k)) != 0)
+            {
+              search_interval = preftab[record.seq.substr(0, k)];
+              auto t1 = high_resolution_clock::now();
+              search_naive(SA, seq, record.seq, positions, search_interval.begin, search_interval.end, search_interval.begin, search_interval.end);
+              auto t2 = high_resolution_clock::now();
+              ms_double = t2 - t1;
+            }
+          }
+          obj << record_temp.seq.size() << "," << record.seq.size() << "," << k << ",naive," << ms_double.count() << "\n";
+
+          long int lcp = 0;
+          long int start_lcp;
+          long int end_lcp;
+          if (k == 0)
+          {
+            auto t1 = high_resolution_clock::now();
+            start_lcp = LCP(seq.substr(SA[0], record.seq.length()), record.seq);
+            end_lcp = LCP(seq.substr(SA[SA.size() - 1], record.seq.length()), record.seq);
+            search_accel(SA, seq, record.seq, positions, 0, SA.size() - 1, 0, SA.size() - 1, start_lcp, end_lcp);
+            auto t2 = high_resolution_clock::now();
+            ms_double = t2 - t1;
+          }
+          else{
+            interval search_interval;
+            if (preftab.count(record.seq.substr(0, k)) != 0)
+            {
+              search_interval = preftab[record.seq.substr(0, k)];
+              auto t1 = high_resolution_clock::now();
+              start_lcp = LCP(seq.substr(SA[search_interval.begin], record.seq.length()), record.seq);
+              end_lcp = LCP(seq.substr(SA[search_interval.end], record.seq.length()), record.seq);
+              search_accel(SA, seq, record.seq, positions, search_interval.begin, search_interval.end, search_interval.begin, search_interval.end, start_lcp, end_lcp);
+              auto t2 = high_resolution_clock::now();
+              ms_double = t2 - t1;
+            }
+          }
+          obj << record_temp.seq.size() << "," << record.seq.size() << "," << k << ",simpaccel," << ms_double.count() << "\n";
+        }
+        if (k == 0){
+          k++;
         }
         else{
-          interval search_interval;
-          if (preftab.count(record.seq.substr(0, k)) != 0)
-          {
-            search_interval = preftab[record.seq.substr(0, k)];
-            start_lcp = LCP(seq.substr(SA[search_interval.begin], record.seq.length()), record.seq);
-            end_lcp = LCP(seq.substr(SA[search_interval.end], record.seq.length()), record.seq);
-            search_accel(SA, seq, record.seq, positions, search_interval.begin, search_interval.end, search_interval.begin, search_interval.end, start_lcp, end_lcp);
-          }
+          k += 2;
         }
       }
-      obj << record.name << "\t" << positions.size();
-      for(auto i: positions)
-      {
-        obj << "\t" << i;
+    }
+    obj.close();
+  }
+  else{
+    KSeq record;
+    SeqStreamIn iss(qfile.c_str());
+    std::ofstream obj;
+    obj.open(ofile);
+    while (iss >> record) {
+      if (record.seq.empty()){
+          std::cout << "The query is empty. It will not be processed" << std::endl;
       }
-      obj << "\n";
-      obj.close();
-    } 
+        std::vector<long int> positions;
+        if (mode.compare("naive") == 0)
+        {
+          if (k == 0)
+          {
+            search_naive(SA, seq, record.seq, positions, 0, SA.size() - 1, 0, SA.size() - 1);
+          }
+          else{
+            // We consult the preftab
+            interval search_interval;
+            if (preftab.count(record.seq.substr(0, k)) != 0)
+            {
+              search_interval = preftab[record.seq.substr(0, k)];
+              search_naive(SA, seq, record.seq, positions, search_interval.begin, search_interval.end, search_interval.begin, search_interval.end);
+            }
+          }
+        }
+        else{
+          long int lcp = 0;
+          long int start_lcp;
+          long int end_lcp;
+          if (k == 0)
+          {
+            start_lcp = LCP(seq.substr(SA[0], record.seq.length()), record.seq);
+            end_lcp = LCP(seq.substr(SA[SA.size() - 1], record.seq.length()), record.seq);
+            search_accel(SA, seq, record.seq, positions, 0, SA.size() - 1, 0, SA.size() - 1, start_lcp, end_lcp);
+          }
+          else{
+            interval search_interval;
+            if (preftab.count(record.seq.substr(0, k)) != 0)
+            {
+              search_interval = preftab[record.seq.substr(0, k)];
+              start_lcp = LCP(seq.substr(SA[search_interval.begin], record.seq.length()), record.seq);
+              end_lcp = LCP(seq.substr(SA[search_interval.end], record.seq.length()), record.seq);
+              search_accel(SA, seq, record.seq, positions, search_interval.begin, search_interval.end, search_interval.begin, search_interval.end, start_lcp, end_lcp);
+            }
+          }
+        }
+        obj << record.name << "\t" << positions.size();
+        for(auto i: positions)
+        {
+          obj << "\t" << i;
+        }
+        obj << "\n";
+      }
+    obj.close();
   }
 }
+
 
 
 int main(int argc, char *argv[])
@@ -234,7 +334,7 @@ int main(int argc, char *argv[])
         {"output", required_argument, NULL, 'o'},
         {"profile", optional_argument, NULL, 'e'},{0}};
   while (1) {
-        const int opt = getopt_long(argc, argv, "iqmoe:", readopts, 0);
+        const int opt = getopt_long(argc, argv, "iqmo:", readopts, 0);
         if (opt == -1) {
             break;
         }
@@ -256,27 +356,28 @@ int main(int argc, char *argv[])
               break;
         }
     }
-  if (ifile.empty()){
-    std::cout << "You did not specify the --index" << std::endl;
-    std::exit (EXIT_FAILURE);
-  }
-  if (qfile.empty()){
-    std::cout << "You did not specify the --queries" << std::endl;
-    std::exit (EXIT_FAILURE);
-  }
-  if (mode.empty()){
-    std::cout << "You did not specify the --query_mode" << std::endl;
-    std::exit (EXIT_FAILURE);
-  }
-  if (outfile.empty()){
-    std::cout << "You did not specify the --output" << std::endl;
-    std::exit (EXIT_FAILURE);
-  }
-  if ((mode.compare("naive") != 0) && (mode.compare("simpaccel") != 0))
-  {
-    std::cout << "Accepted options for --query_mode are <naive> and <simpaccel>" << std::endl;
-    std::exit (EXIT_FAILURE);
-  }
+    if (ifile.empty()){
+      std::cout << "You did not specify the --index" << std::endl;
+      std::exit (EXIT_FAILURE);
+    }
+    if (qfile.empty()){
+      std::cout << "You did not specify the --queries" << std::endl;
+      std::exit (EXIT_FAILURE);
+    }
+    if (mode.empty()){
+      std::cout << "You did not specify the --query_mode" << std::endl;
+      std::exit (EXIT_FAILURE);
+    }
+    if (outfile.empty()){
+      std::cout << "You did not specify the --output" << std::endl;
+      std::exit (EXIT_FAILURE);
+    }
+    if ((mode.compare("naive") != 0) && (mode.compare("simpaccel") != 0))
+    {
+      std::cout << "Accepted options for --query_mode are <naive> and <simpaccel>" << std::endl;
+      std::exit (EXIT_FAILURE);
+    }
+  
   KSeq record;
   std::unordered_map<std::string, interval> pref_Tab;
   sdsl::int_vector SA;
